@@ -1,0 +1,41 @@
+builds:
+  - binary: cert-updater
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm
+    goarm:
+      - 5
+      - 6
+      - 7
+    flags: -a -tags netgo
+    ldflags:
+      - |
+        -s
+        -w
+        -X main.versionString={{.Version}}
+        -X main.versionCommit={{.ShortCommit}}
+    hooks:
+      post: hack/minify-binaries.sh
+archive:
+  format: binary
+release:
+  github:
+    owner: simonswine
+    name: cert-updater
+
+sign:
+  artifacts: checksum
+  signature: "${artifact}.asc"
+  args:
+    - -u
+    - simon@swine.de
+    - --armor
+    - --output
+    - ${signature}
+    - --detach-sign
+    - ${artifact}
