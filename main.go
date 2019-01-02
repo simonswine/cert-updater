@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"reflect"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +22,7 @@ var config = &Config{}
 var versionString = "unknown"
 var versionCommit = ""
 
+// Config represents config of the updater
 type Config struct {
 	SecretName    string
 	Namespace     string
@@ -29,6 +32,8 @@ type Config struct {
 
 	CertificateFile string
 	KeyFile         string
+
+	PostUpdateHook []string
 }
 
 func init() {
@@ -38,6 +43,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&config.APIServer, "apiserver-url", "a", "http://127.0.0.1:8001", "API server URL")
 	rootCmd.PersistentFlags().StringVarP(&config.CertificateFile, "cert-file", "C", "tls.crt", "file to store the certificate")
 	rootCmd.PersistentFlags().StringVarP(&config.KeyFile, "key-file", "K", "tls.key", "file to store the key")
+	rootCmd.PersistentFlags().StringSliceVarP(&config.PostUpdateHook, "post-update-hook", "p", []string{}, "shell command to run after a successful certificate update")
 	if len(versionCommit) > 0 {
 		rootCmd.Version = fmt.Sprintf("%s commit=%s", versionString, versionCommit)
 	} else {
@@ -119,15 +125,30 @@ var rootCmd = &cobra.Command{
 			log.Fatalf("unexpected secret type exp=%s act=%s", exp, act)
 		}
 
+		existingKey, err := ioutil.ReadFile(config.KeyFile)
+		if err != nil {
+			existingKey = []byte{}
+		}
+
+		existingCertificate, err := ioutil.ReadFile(config.CertificateFile)
+		if err != nil {
+			existingCertificate = []byte{}
+		}
+
+		updated := false
+
 		if base64Data, ok := secret.Data["tls.key"]; ok {
 			key, err := base64.StdEncoding.DecodeString(base64Data)
 			if err != nil {
 				log.Fatalf("error decoding key: %s", err)
 			}
 
-			err = ioutil.WriteFile(config.KeyFile, key, 0600)
-			if err != nil {
-				log.Fatalf("error writing key: %s", err)
+			if !reflect.DeepEqual(key, existingKey) {
+				err = ioutil.WriteFile(config.KeyFile, key, 0600)
+				if err != nil {
+					log.Fatalf("error writing key: %s", err)
+				}
+				updated = true
 			}
 		}
 
@@ -137,12 +158,28 @@ var rootCmd = &cobra.Command{
 				log.Fatalf("error decoding cert: %s", err)
 			}
 
-			err = ioutil.WriteFile(config.CertificateFile, crt, 0644)
-			if err != nil {
-				log.Fatalf("error writing cert: %s", err)
+			if !reflect.DeepEqual(crt, existingCertificate) {
+				err = ioutil.WriteFile(config.CertificateFile, crt, 0644)
+				if err != nil {
+					log.Fatalf("error writing cert: %s", err)
+				}
+				updated = true
 			}
 		}
 
+		if updated {
+			log.Printf("certificate updated")
+			if len(config.PostUpdateHook) != 0 {
+				log.Printf("running post-update-hook %v", config.PostUpdateHook)
+				cmd := exec.Command(config.PostUpdateHook[0], config.PostUpdateHook[1:]...)
+				err := cmd.Run()
+				if err != nil {
+					log.Fatalf("error running post-update-hook: %s", err)
+				}
+			}
+		} else {
+			log.Printf("certificate matches, no update necessary")
+		}
 	},
 }
 
